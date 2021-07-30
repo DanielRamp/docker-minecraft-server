@@ -1,0 +1,23 @@
+version: "3.8"
+
+services:
+  development:
+    image: itzg/minecraft-server:latest # Hotspot Java 8 on Alpine (not multiarch)
+    #build:
+    #  context: .
+    #  args:
+    #    TARGETOS: linux
+    #    TARGETARCH: amd64
+    #  cache_from:
+    #  - itzg/minecraft-server:latest
+    environment:
+      - VERSION=1.17.1
+      - TYPE=PAPER
+      - EULA=TRUE
+      - COPY_CONFIG_DEST=/data
+      - SPIGET_RESOURCES=9089:367353,34315,28140:388301 # EssentialsX, Vault, LuckPerms: https://github.com/itzg/docker-minecraft-server/issues/825#issue-850340435
+      #- MEMORY=512M # default 1G
+      - SCRIPTS=/scripts/
+    volumes:
+      - /etc/timezone:/etc/timezone:ro
+      - ./scripts/:/scripts/
