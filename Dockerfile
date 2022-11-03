@@ -1,31 +1,18 @@
-FROM adoptopenjdk:16-jre
+# syntax = docker/dockerfile:1.3
 
-LABEL org.opencontainers.image.authors="Geoff Bourne <itzgeoff@gmail.com>"
+ARG BASE_IMAGE=eclipse-temurin:17-jre-focal
+FROM ${BASE_IMAGE}
 
-RUN apt-get update \
-  && DEBIAN_FRONTEND=noninteractive \
-  apt-get install -y \
-    imagemagick \
-    gosu \
-    sudo \
-    net-tools \
-    curl wget \
-    git \
-    jq \
-    dos2unix \
-    mysql-client \
-    tzdata \
-    rsync \
-    nano \
-    unzip \
-    knockd \
-    ttf-dejavu \
-    && apt-get clean
+# CI system should set this to a hash or git revision of the build directory and it's contents to
+# ensure consistent cache updates.
+ARG BUILD_FILES_REV=1
+RUN --mount=target=/build,source=build \
+    REV=${BUILD_FILES_REV} /build/run.sh install-packages
 
-RUN addgroup --gid 1000 minecraft \
-  && adduser --system --shell /bin/false --uid 1000 --ingroup minecraft --home /data minecraft
+RUN --mount=target=/build,source=build \
+    REV=${BUILD_FILES_REV} /build/run.sh setup-user
 
-COPY files/sudoers* /etc/sudoers.d
+COPY --chmod=644 files/sudoers* /etc/sudoers.d
 
 EXPOSE 25565 25575
 
@@ -44,46 +31,43 @@ RUN easy-add --var os=${TARGETOS} --var arch=${TARGETARCH}${TARGETVARIANT} \
   --from https://github.com/itzg/{{.app}}/releases/download/{{.version}}/{{.app}}_{{.version}}_{{.os}}_{{.arch}}.tar.gz
 
 RUN easy-add --var os=${TARGETOS} --var arch=${TARGETARCH}${TARGETVARIANT} \
- --var version=1.4.7 --var app=rcon-cli --file {{.app}} \
- --from https://github.com/itzg/{{.app}}/releases/download/{{.version}}/{{.app}}_{{.version}}_{{.os}}_{{.arch}}.tar.gz
+  --var version=1.6.0 --var app=rcon-cli --file {{.app}} \
+  --from https://github.com/itzg/{{.app}}/releases/download/{{.version}}/{{.app}}_{{.version}}_{{.os}}_{{.arch}}.tar.gz
 
 RUN easy-add --var os=${TARGETOS} --var arch=${TARGETARCH}${TARGETVARIANT} \
- --var version=0.7.1 --var app=mc-monitor --file {{.app}} \
- --from https://github.com/itzg/{{.app}}/releases/download/{{.version}}/{{.app}}_{{.version}}_{{.os}}_{{.arch}}.tar.gz
+  --var version=0.11.0 --var app=mc-monitor --file {{.app}} \
+  --from https://github.com/itzg/{{.app}}/releases/download/{{.version}}/{{.app}}_{{.version}}_{{.os}}_{{.arch}}.tar.gz
 
 RUN easy-add --var os=${TARGETOS} --var arch=${TARGETARCH}${TARGETVARIANT} \
- --var version=1.5.0 --var app=mc-server-runner --file {{.app}} \
- --from https://github.com/itzg/{{.app}}/releases/download/{{.version}}/{{.app}}_{{.version}}_{{.os}}_{{.arch}}.tar.gz
+  --var version=1.8.1 --var app=mc-server-runner --file {{.app}} \
+  --from https://github.com/itzg/{{.app}}/releases/download/{{.version}}/{{.app}}_{{.version}}_{{.os}}_{{.arch}}.tar.gz
 
 RUN easy-add --var os=${TARGETOS} --var arch=${TARGETARCH}${TARGETVARIANT} \
- --var version=0.1.1 --var app=maven-metadata-release --file {{.app}} \
- --from https://github.com/itzg/{{.app}}/releases/download/{{.version}}/{{.app}}_{{.version}}_{{.os}}_{{.arch}}.tar.gz
+  --var version=0.1.1 --var app=maven-metadata-release --file {{.app}} \
+  --from https://github.com/itzg/{{.app}}/releases/download/{{.version}}/{{.app}}_{{.version}}_{{.os}}_{{.arch}}.tar.gz
 
-COPY mcstatus /usr/local/bin
+ARG MC_HELPER_VERSION=1.22.7
+ARG MC_HELPER_RELEASE=v${MC_HELPER_VERSION}
+ARG MC_HELPER_BASE_URL=https://github.com/itzg/mc-image-helper/releases/download/${MC_HELPER_RELEASE}
+RUN curl -fsSL ${MC_HELPER_BASE_URL}/mc-image-helper-${MC_HELPER_VERSION}.tgz \
+  | tar -C /usr/share -zxf - \
+  && ln -s /usr/share/mc-image-helper-${MC_HELPER_VERSION}/bin/mc-image-helper /usr/bin
 
 VOLUME ["/data"]
-COPY server.properties /tmp/server.properties
-COPY log4j2.xml /tmp/log4j2.xml
 WORKDIR /data
 
 STOPSIGNAL SIGTERM
 
-ENV UID=1000 GID=1000 \
-  MEMORY="1G" \
-  TYPE=VANILLA VERSION=LATEST \
-  ENABLE_RCON=true RCON_PORT=25575 RCON_PASSWORD=minecraft \
-  SERVER_PORT=25565 ONLINE_MODE=TRUE SERVER_NAME="Dedicated Server" \
-  ENABLE_AUTOPAUSE=false AUTOPAUSE_TIMEOUT_EST=3600 AUTOPAUSE_TIMEOUT_KN=120 AUTOPAUSE_TIMEOUT_INIT=600 \
-  AUTOPAUSE_PERIOD=10 AUTOPAUSE_KNOCK_INTERFACE=eth0
+# End user MUST set EULA and change RCON_PASSWORD
+ENV TYPE=VANILLA VERSION=LATEST EULA="" UID=1000 GID=1000 RCON_PASSWORD=minecraft
 
-COPY start* /
-COPY health.sh /
-ADD files/autopause /autopause
+COPY --chmod=755 scripts/start* /
+COPY --chmod=755 bin/ /usr/local/bin/
+COPY --chmod=755 bin/mc-health /health.sh
+COPY --chmod=644 files/log4j2.xml /image/log4j2.xml
+COPY --chmod=755 files/auto /auto
 
-RUN dos2unix /start* && chmod +x /start*
-RUN dos2unix /health.sh && chmod +x /health.sh
-RUN dos2unix /autopause/* && chmod +x /autopause/*.sh
-
+RUN dos2unix /start* /auto/*
 
 ENTRYPOINT [ "/start" ]
-HEALTHCHECK --start-period=1m CMD /health.sh
+HEALTHCHECK --start-period=1m --interval=5s --retries=24 CMD mc-health
